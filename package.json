@@ -1,0 +1,16 @@
+{
+  "name": "ramblog",
+  "version": "0.0.1",
+  "description": "It's a blog that lives in your RAM",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js"
+  },
+  "author": "Jannik Lemberg",
+  "license": "ISC",
+  "dependencies": {
+    "highlight.js": "^8.4.0",
+    "marked": "^0.3.3"
+  }
+}

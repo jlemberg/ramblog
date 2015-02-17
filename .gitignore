@@ -1,0 +1,6 @@
+node_modules
+posts/*
+layout/*
+!layout/default
+config.js
+launch.sh
