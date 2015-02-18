@@ -13,7 +13,8 @@ var constants = {
 
 var conf = {
 	layoutName: 'default',
-	postSeparator: "</article>\n<article>\n",
+	postOpening: "<article>\n",
+	postClosing: "</article>\n",
 	postsPerPage: 4 
 };
 
@@ -34,58 +35,126 @@ if(confFromFile) {
 
 constants.headerFile = path.join(constants.layoutDir, conf.layoutName, constants.headerFile);
 constants.footerFile = path.join(constants.layoutDir, conf.layoutName, constants.footerFile);
+conf.postSeparator = conf.postClosing + conf.postOpening;
 
 var rebuilding = false;
 var blogStream = [];
 var singlePosts = {};
+var taggedPosts = {};
 
 function mlog(what) {
 	console.log(new Date().getTime() + "\t" + what);
 }
 
+function handleTags(postContent, headerHtml) {
+	var regex = /#([^0-9][a-z0-9]+)/i;
+	var matches;
+	var tags={};
+	while(matches = postContent.match(regex)) {
+		postContent = postContent.replace(regex, "<a class=\"tag\" href=\"/$1\">$1</a>");
+		tags[matches[1]] = true;
+	}
+
+	for(var tag in tags) {
+		if(!taggedPosts[tag]) {
+			taggedPosts[tag] = [headerHtml];
+		}
+		taggedPosts[tag].push(conf.postOpening + postContent + conf.postClosing);
+	}
+
+	return postContent;
+}
+
 function rebuild() {
-	if(rebuilding) return;
+	if(rebuilding) {
+		mlog('Rebuild already triggered. Aborting');
+		return;
+	}
 	mlog('Rebuilding...');
 	rebuilding = true;
 
 	var headerHtml = fs.readFileSync(constants.headerFile, constants.readOptions);
 	var footerHtml = fs.readFileSync(constants.footerFile, constants.readOptions);
-	var posts = fs.readdirSync(constants.postsDir);
-	var postCount = posts.length;
+	var scannedPosts = fs.readdirSync(constants.postsDir);
+	var unprocessedPosts = [];
+
+	for(var i=0,j=scannedPosts.length;i<j;i++) {
+		if(scannedPosts[i].match(/^\w+\.md$/)) {
+			unprocessedPosts.push(scannedPosts[i]);
+		}
+	}	
+
+	var postCount = unprocessedPosts.length;
 
 	var pages = Math.ceil(postCount / conf.postsPerPage);
 	var page = 0;
 
-	posts.sort(function(a,b){
+	unprocessedPosts.sort(function(a,b){
 		return fs.statSync(path.join(constants.postsDir,b)).ctime.getTime() -
 			fs.statSync(path.join(constants.postsDir,a)).ctime.getTime();
 	});
 
 	mlog('Reading '+postCount+' posts...');
 	
+	var posts = [];
+	taggedPosts = {};
+
+	for(var i=0; i<postCount; i++) {
+		var postPath = path.join(constants.postsDir, unprocessedPosts[i]);
+		var postContent = fs.readFileSync(postPath, constants.readOptions);
+		var ctime = fs.statSync(postPath).ctime;
+		postContent += "\n\n"+'<a href="/'+unprocessedPosts[i]+'">'+unprocessedPosts[i]+"</a> - "+ctime.toString();
+		postContent = marked(postContent);
+		postContent = handleTags(postContent, headerHtml);
+		posts.push({title:unprocessedPosts[i], content:postContent});
+	}
+
+	var tags=[];
+	for(var tag in taggedPosts) {
+		tags.push(tag);
+	}
+	tags.sort(function(a,b){
+		return taggedPosts[b].length - taggedPosts[a].length;
+	});
+
+	var tagDiv = '<section><h3>tags</h3><ol>';
+	for(var i=0, j=tags.length;i<j; i++) {
+		tagDiv += '<li><a href="/'+tags[i]+'">'+tags[i]+'</a> ('+(taggedPosts[tags[i]].length-1)+')</li>';
+	}
+	tagDiv += '</ol></section>';
+
+	for(var tag in taggedPosts) {
+		taggedPosts[tag].push( '<a href="/">&lt; home</a>' );
+		taggedPosts[tag].splice(1,0,tagDiv);
+		taggedPosts[tag].push(footerHtml);
+		taggedPosts[tag] = taggedPosts[tag].join("\n");
+	}
+
+
 	var htmlBlocks = [];
 	var postBlocks = [];
 
 	for(var i=0; i<postCount; i++) {
-		var postPath = path.join(constants.postsDir, posts[i]);
-		var postContent = fs.readFileSync(postPath, constants.readOptions);
-		var ctime = fs.statSync(postPath).ctime;
-		postContent += "\n\n"+'<a href="/'+posts[i]+'">'+posts[i]+"</a> - "+ctime.toString();
-		postContent = marked(postContent);
-		postBlocks.push(postContent);
+		mlog(i+': placing ' +posts[i].title+ ' on page '+page+'/'+(pages-1));
 
 		var singlePostHtmlBlocks = [];
 		singlePostHtmlBlocks.push(headerHtml);
-		singlePostHtmlBlocks.push(postContent);
-		singlePostHtmlBlocks.push(footerHtml);
+		singlePostHtmlBlocks.push(tagDiv);
+		singlePostHtmlBlocks.push(conf.postOpening);
+		singlePostHtmlBlocks.push(posts[i].content);
+		singlePostHtmlBlocks.push(conf.postClosing);
 		singlePostHtmlBlocks.push( '<a href="/">&lt; home</a>' );
-		singlePosts[posts[i]] = singlePostHtmlBlocks.join("\n");
+		singlePostHtmlBlocks.push(footerHtml);
+		singlePosts[posts[i].title] = singlePostHtmlBlocks.join("\n");
 
-		mlog(i+': placing ' +posts[i]+ ' on page '+page+'/'+(pages-1));
+		postBlocks.push(posts[i].content);
 
 		if((page == 0 && i == conf.postsPerPage) || !((i+1)%conf.postsPerPage) || i==(postCount-1)) {
 			htmlBlocks.push( headerHtml );
+			htmlBlocks.push( tagDiv );
+			htmlBlocks.push(conf.postOpening);
 			htmlBlocks.push(postBlocks.join(conf.postSeparator));
+			htmlBlocks.push(conf.postClosing);
 
 			var prevPage = (page+1 > pages-1) ? false : page+1;
 			var nextPage = (page-1 < 0) ? false : page-1;
@@ -126,9 +195,17 @@ function serve(req, res) {
 
 	var postMatch=req.url.match(/\/(\w+\.md)/);
 	if(postMatch) {
-		post = postMatch[1];
+		var post = postMatch[1];
 		if(singlePosts[post]) {
 			return out(res, 200, singlePosts[post]);
+		}
+	}
+
+	var tagMatch=req.url.match(/\/([^0-9][a-z0-9]+)/i);
+	if(tagMatch) {
+		var tag = tagMatch[1];
+		if(taggedPosts[tag]) {
+			return out(res, 200, taggedPosts[tag]);
 		}
 	}
 
@@ -144,6 +221,15 @@ function serve(req, res) {
 	}
 
 }
+
+fs.watch(constants.postsDir, function(evt, file){
+	if(evt == 'rename') {
+		if(file.match(/^\w+\.md$/)) {
+			mlog('Something changed. Better rebuild');
+			rebuild();
+		}
+	}
+});
 
 rebuild();
 
