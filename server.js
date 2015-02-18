@@ -47,12 +47,19 @@ function mlog(what) {
 }
 
 function handleTags(postContent, headerHtml) {
-	var regex = /#([^0-9][a-z0-9]+)/i;
+	var regex = /#([a-z][a-z0-9]+)/i;
 	var matches;
 	var tags={};
+	var tagged=0;
+
 	while(matches = postContent.match(regex)) {
 		postContent = postContent.replace(regex, "<a class=\"tag\" href=\"/$1\">$1</a>");
+		tagged++;
 		tags[matches[1]] = true;
+	}
+
+	if(tagged === 0) {
+		tags['untagged'] = true;
 	}
 
 	for(var tag in tags) {
@@ -187,9 +194,6 @@ function out(res, httpStatus, httpOutput) {
 function serve(req, res) {
 	if(req.url == '/favicon.ico') return;
 	mlog('Requested: ' + req.url);
-	if(req.url == '/rebuild') {
-		rebuild();
-	}
 
 	var output = null;
 
